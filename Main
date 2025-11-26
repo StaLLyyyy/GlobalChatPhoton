@@ -20,7 +20,7 @@ local ui = {
     last_scroll_time = 0
 }
 
-local menu = gui.create("Chat Config", true)
+local menu = gui.create("Chat Config", false)
 menu:set_size(350, 350)
 menu:set_pos(50, 50)
 
