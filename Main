@@ -1,10 +1,12 @@
 local API_URL = "http://StaLLyyyy.pythonanywhere.com"
 local lp = game:get_service("Players").local_player
 local current_room = "global"
+local current_pass = ""
 local last_data = ""
 local chat_history = {}
 local online_users = {}
 local last_msg_tick = 0
+local CFG_FILE = "photon_chat_save.json"
 
 local ui = {
     x = 100,
@@ -18,20 +20,37 @@ local ui = {
     last_scroll_time = 0
 }
 
-local menu = gui.create("Chat Config", false)
-menu:set_size(300, 250)
+local menu = gui.create("Chat Config", true)
+menu:set_size(350, 350)
 menu:set_pos(50, 50)
 
 local room_box = menu:add_textbox("Room Name")
-menu:add_button("Connect", function()
+local pass_box = menu:add_textbox("Password (Optional)")
+
+menu:add_button("Connect & Save", function()
     local t = room_box:get_text()
+    local p = pass_box:get_text()
     if t and #t > 0 then
         current_room = string.sub(t, 1, 15)
+        current_pass = p or ""
         chat_history = {}
         last_data = ""
         ui.scroll = 0
+        
+        local save_data = {room = current_room, pass = current_pass}
+        file.write(CFG_FILE, table_to_JSON(save_data), "text")
     end
 end)
+
+if file.exists(CFG_FILE) then
+    local raw = file.read(CFG_FILE)
+    local saved = JSON_to_table(raw)
+    if saved then
+        if saved.room then current_room = saved.room end
+        if saved.pass then current_pass = saved.pass end
+        log.add("Auto-loaded Room: " .. current_room, color(0, 1, 0, 1))
+    end
+end
 
 local msg_box = menu:add_textbox("Message")
 menu:add_button("Send", function()
@@ -59,6 +78,7 @@ function request_server(msg)
     local payload = {
         username = lp.name,
         room_id = current_room,
+        password = current_pass,
         message = msg or ""
     }
     
@@ -74,6 +94,9 @@ function request_server(msg)
                 if #chat_history > old_len and ui.scroll == 0 then
                 end
             end
+        elseif code == 403 then
+            chat_history = {{user = "SYSTEM", msg = "WRONG PASSWORD", time = "ERR"}}
+            online_users = {}
         end
     end)
 end
@@ -85,7 +108,7 @@ spawn(function()
     end
 end)
 
-hook.add("render", "photon_chat_secure", function()
+hook.add("render", "photon_chat_pass", function()
     if not menu_active() then return end
 
     local m = input.get_mouse_position()
@@ -144,8 +167,11 @@ hook.add("render", "photon_chat_secure", function()
     render.add_rect(vector2(ui.x, ui.y), vector2(ui.x + ui.w, ui.y + ui.h), colors.border, 8, 1)
     render.add_rect_filled(vector2(ui.x, ui.y), vector2(ui.x + ui.w, ui.y + 30), colors.header, 8)
     
-    render.add_text(vector2(ui.x + 12, ui.y + 7), "Photon Chat", colors.accent, 16, true)
-    render.add_text(vector2(ui.x + 105, ui.y + 8), "|  " .. safe_str(current_room, 20), colors.text_dim, 14, true)
+    local locked_str = ""
+    if current_pass ~= "" then locked_str = " [LOCKED]" end
+    
+    render.add_text(vector2(ui.x + 12, ui.y + 7), "Photon Chat" .. locked_str, colors.accent, 16, true)
+    render.add_text(vector2(ui.x + 125, ui.y + 8), "|  " .. safe_str(current_room, 20), colors.text_dim, 14, true)
 
     local start_y = ui.y + 45
     local end_idx = total_msgs - ui.scroll
