@@ -1,0 +1,230 @@
+local API_URL = "http://StaLLyyyy.pythonanywhere.com"
+local lp = game:get_service("Players").local_player
+local current_room = "global"
+local last_data = ""
+local chat_history = {}
+local online_users = {}
+local last_msg_tick = 0
+
+local ui = {
+    x = 100,
+    y = 100,
+    w = 520,
+    h = 320,
+    dragging = false,
+    drag_x = 0,
+    drag_y = 0,
+    scroll = 0,
+    last_scroll_time = 0
+}
+
+local menu = gui.create("Chat Config", false)
+menu:set_size(300, 250)
+menu:set_pos(50, 50)
+
+local room_box = menu:add_textbox("Room Name")
+menu:add_button("Connect", function()
+    local t = room_box:get_text()
+    if t and #t > 0 then
+        current_room = string.sub(t, 1, 15)
+        chat_history = {}
+        last_data = ""
+        ui.scroll = 0
+    end
+end)
+
+local msg_box = menu:add_textbox("Message")
+menu:add_button("Send", function()
+    local t = msg_box:get_text()
+    local now = get_tickcount()
+    if t and #t > 0 then
+        if now - last_msg_tick > 1000 then
+            last_msg_tick = now
+            request_server(t)
+            ui.scroll = 0
+        end
+    end
+end)
+
+function safe_str(v, limit)
+    if not v then return "" end
+    local s = tostring(v)
+    if #s > limit then
+        return string.sub(s, 1, limit) .. "..."
+    end
+    return s
+end
+
+function request_server(msg)
+    local payload = {
+        username = lp.name,
+        room_id = current_room,
+        message = msg or ""
+    }
+    
+    http.post(API_URL .. "/chat_v3", table_to_JSON(payload), function(body, code)
+        if code == 200 and body ~= last_data then
+            last_data = body
+            local data = JSON_to_table(body)
+            if data then
+                local old_len = #chat_history
+                chat_history = data.history or {}
+                online_users = data.users or {}
+                
+                if #chat_history > old_len and ui.scroll == 0 then
+                end
+            end
+        end
+    end)
+end
+
+spawn(function()
+    while true do
+        request_server(nil)
+        wait(2000)
+    end
+end)
+
+hook.add("render", "photon_chat_secure", function()
+    if not menu_active() then return end
+
+    local m = input.get_mouse_position()
+    local lclick = input.key_down(0x01)
+    local up_key = input.key_down(0x26)
+    local down_key = input.key_down(0x28)
+    local now = get_tickcount()
+
+    if lclick then
+        if not ui.dragging then
+            if m.x > ui.x and m.x < ui.x + ui.w and m.y > ui.y and m.y < ui.y + 30 then
+                ui.dragging = true
+                ui.drag_x = m.x - ui.x
+                ui.drag_y = m.y - ui.y
+            end
+        else
+            ui.x = m.x - ui.drag_x
+            ui.y = m.y - ui.drag_y
+        end
+    else
+        ui.dragging = false
+    end
+
+    if now - ui.last_scroll_time > 80 then
+        if up_key then
+            ui.scroll = ui.scroll + 1
+            ui.last_scroll_time = now
+        elseif down_key then
+            ui.scroll = ui.scroll - 1
+            ui.last_scroll_time = now
+        end
+    end
+
+    local max_visible = 11
+    local total_msgs = #chat_history
+    local max_scroll = total_msgs - max_visible
+    
+    if max_scroll < 0 then max_scroll = 0 end
+    if ui.scroll > max_scroll then ui.scroll = max_scroll end
+    if ui.scroll < 0 then ui.scroll = 0 end
+
+    local colors = {
+        bg = color(0.08, 0.09, 0.11, 0.95),
+        header = color(0.12, 0.13, 0.16, 1),
+        border = color(0.25, 0.25, 0.3, 0.5),
+        text_main = color(0.9, 0.9, 0.9, 1),
+        text_dim = color(0.5, 0.5, 0.6, 1),
+        accent = color(0.0, 0.65, 1.0, 1),
+        online = color(0.2, 0.8, 0.3, 1),
+        separator = color(1, 1, 1, 0.05),
+        scrollbar_bg = color(0, 0, 0, 0.3),
+        scrollbar_thumb = color(1, 1, 1, 0.3)
+    }
+    
+    render.add_rect_filled(vector2(ui.x, ui.y), vector2(ui.x + ui.w, ui.y + ui.h), colors.bg, 8)
+    render.add_rect(vector2(ui.x, ui.y), vector2(ui.x + ui.w, ui.y + ui.h), colors.border, 8, 1)
+    render.add_rect_filled(vector2(ui.x, ui.y), vector2(ui.x + ui.w, ui.y + 30), colors.header, 8)
+    
+    render.add_text(vector2(ui.x + 12, ui.y + 7), "Photon Chat", colors.accent, 16, true)
+    render.add_text(vector2(ui.x + 105, ui.y + 8), "|  " .. safe_str(current_room, 20), colors.text_dim, 14, true)
+
+    local start_y = ui.y + 45
+    local end_idx = total_msgs - ui.scroll
+    local start_idx = end_idx - max_visible + 1
+    
+    if start_idx < 1 then start_idx = 1 end
+    
+    local line_c = 0
+    for i = start_idx, end_idx do
+        local msg = chat_history[i]
+        if msg then
+            local yp = start_y + (line_c * 22)
+            
+            local time_s = "[" .. safe_str(msg.time, 5) .. "]"
+            local user_s = safe_str(msg.user, 12)
+            local msg_s = safe_str(msg.msg, 45)
+            
+            local cur_x = ui.x + 12
+            
+            render.add_text(vector2(cur_x, yp), time_s, colors.text_dim, 13, true)
+            local ts = render.get_text_size(time_s)
+            cur_x = cur_x + ts.x + 6
+            
+            render.add_text(vector2(cur_x, yp), user_s, colors.accent, 13, true)
+            local us = render.get_text_size(user_s)
+            cur_x = cur_x + us.x
+            
+            render.add_text(vector2(cur_x, yp), ":", colors.text_main, 13, true)
+            local cs = render.get_text_size(":")
+            cur_x = cur_x + cs.x + 5
+            
+            render.add_text(vector2(cur_x, yp), msg_s, colors.text_main, 13, true)
+            
+            line_c = line_c + 1
+        end
+    end
+
+    local sb_x = ui.x + ui.w - 148 
+    local sb_y = ui.y + 40
+    local sb_h = ui.h - 50
+    
+    if total_msgs > max_visible then
+        render.add_rect_filled(vector2(sb_x, sb_y), vector2(sb_x + 4, sb_y + sb_h), colors.scrollbar_bg, 2)
+        
+        local view_ratio = max_visible / total_msgs
+        local thumb_h = sb_h * view_ratio
+        if thumb_h < 20 then thumb_h = 20 end
+        
+        local scroll_ratio = ui.scroll / max_scroll
+        local track_h = sb_h - thumb_h
+        local thumb_y = sb_y + (track_h * (1 - scroll_ratio)) 
+        
+        if ui.scroll == 0 then thumb_y = sb_y + track_h end 
+        if ui.scroll == max_scroll then thumb_y = sb_y end
+
+        render.add_rect_filled(vector2(sb_x, thumb_y), vector2(sb_x + 4, thumb_y + thumb_h), colors.scrollbar_thumb, 2)
+    end
+
+    local list_w = 140
+    local list_x = ui.x + ui.w - list_w
+    
+    render.add_line(vector2(list_x, ui.y + 30), vector2(list_x, ui.y + ui.h), colors.separator, 1)
+    render.add_rect_filled(vector2(list_x, ui.y + 30), vector2(ui.x + ui.w, ui.y + 55), color(0,0,0,0.2), 0)
+    render.add_text(vector2(list_x + 10, ui.y + 36), "ONLINE", colors.text_dim, 12, true)
+    
+    local count = 0
+    if online_users then count = #online_users end
+    render.add_text(vector2(ui.x + ui.w - 25, ui.y + 36), tostring(count), colors.online, 12, true)
+
+    local u_start_y = ui.y + 65
+    for i = 1, #online_users do
+        if i <= 10 then
+            local u = online_users[i]
+            local name = u
+            if type(u) == "table" and u.name then name = u.name end
+            
+            local up = u_start_y + ((i-1) * 20)
+            render.add_circle_filled(vector2(list_x + 14, up + 6), 3, colors.online)
+            render.add_text(vector2(list_x + 24, up), safe_str(name, 14), colors.text_main, 13, true)
+        end
+    end
+end)
